@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+<<<<<< HEAD
 # CrisisLink — Disaster Resource Coordination Platform
 
 A CLI app that helps NGOs, government agencies, and volunteer groups coordinate resource
