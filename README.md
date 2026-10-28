@@ -1,4 +1,3 @@
-<<<<<< HEAD
 # CrisisLink — Disaster Resource Coordination Platform
 
 A CLI app that helps NGOs, government agencies, and volunteer groups coordinate resource
@@ -140,11 +139,3 @@ crisislink/
 | Advanced querying | 2 | JOIN, GROUP BY, sub-query, procedure, view, 3 pipelines |
 | Code quality & documentation | 1 | README, ER description, docstrings, comments |
 | Testing & error handling | 1 | `unittest` suite, validation loops, try/except, logging |
-
-## Author
-
-Abel, B.Tech AIML, Symbiosis Institute of Technology, Pune
-=======
-# crisislink
-Disaster resource coordination platform using MySQL and MongoDB. Matches relief requests to supplies with SQL procedures, triggers, and a Streamlit dashboard.
->>>>>>> 739a4fc12beecb090be0410f261c4d0eed26dcd7
