@@ -1,0 +1,14 @@
+# CrisisLink Command Center theme. Streamlit reads this file from the folder you run it in.
+[theme]
+base = "dark"
+primaryColor = "#3FE0D0"
+backgroundColor = "#0A0F14"
+secondaryBackgroundColor = "#141E28"
+textColor = "#E8EEF2"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

@@ -1,0 +1,33 @@
+# One-command local environment for CrisisLink.
+#   Start:  docker compose up -d
+#   Stop:   docker compose down        (add -v to wipe data)
+#
+# MySQL auto-loads docker/mysql-init/*.sql on first start (schema, then data).
+# MongoDB auto-loads docker/mongo-init/*.js on first start.
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: crisislink_docker_pw
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+      - mysql_data:/var/lib/mysql
+
+  mongo:
+    image: mongo:6
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: crisislink_nosql
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./docker/mongo-init:/docker-entrypoint-initdb.d
+      - mongo_data:/data/db
+
+volumes:
+  mysql_data:
+  mongo_data:
