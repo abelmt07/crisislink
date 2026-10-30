@@ -71,8 +71,8 @@ SELECT
     COALESCE(SUM(m.matched_qty), 0) AS total_matched_qty
 FROM requests r
 LEFT JOIN matches m ON r.request_id = m.request_id
-    AND m.match_status IN ('PENDING', 'CONFIRMED')
-WHERE r.status != 'DELIVERED'
+    AND m.match_status <> 'REJECTED'
+WHERE r.status NOT IN ('DELIVERED', 'CANCELLED')
 GROUP BY r.zone
 ORDER BY critical_requests DESC, open_requests DESC;
 

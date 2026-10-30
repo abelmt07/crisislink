@@ -150,7 +150,7 @@ def get_unmet_requests() -> list:
         INNER JOIN organizations o ON r.org_id = o.org_id
         WHERE r.status = 'OPEN'
         AND r.request_id NOT IN (
-            SELECT DISTINCT request_id FROM matches WHERE match_status = 'CONFIRMED'
+                        SELECT DISTINCT request_id FROM matches WHERE match_status <> 'REJECTED'
         )
         ORDER BY FIELD(r.urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), r.created_at ASC
         """
@@ -158,17 +158,24 @@ def get_unmet_requests() -> list:
 
 
 def get_zone_summary() -> list:
-    """Query 2: zone-wise requested vs matched quantities using GROUP BY."""
+    """Query 2: zone-wise requested vs matched quantities using GROUP BY.
+    Matches are totalled per request first, so a request with several
+    matches is not counted twice. REJECTED matches are excluded."""
     return _fetch_all(
         """
         SELECT r.zone,
-               COUNT(DISTINCT r.request_id) AS total_requests,
+               COUNT(*) AS total_requests,
                SUM(r.quantity) AS total_requested_qty,
-               COUNT(DISTINCT m.match_id) AS total_matches,
-               COALESCE(SUM(m.matched_qty), 0) AS total_matched_qty,
-               ROUND((COALESCE(SUM(m.matched_qty), 0) / SUM(r.quantity)) * 100, 2) AS fulfillment_pct
+               SUM(COALESCE(m.match_count, 0)) AS total_matches,
+               SUM(COALESCE(m.allocated, 0)) AS total_matched_qty,
+               ROUND(SUM(COALESCE(m.allocated, 0)) / SUM(r.quantity) * 100, 2) AS fulfillment_pct
         FROM requests r
-        LEFT JOIN matches m ON r.request_id = m.request_id AND m.match_status = 'CONFIRMED'
+        LEFT JOIN (
+            SELECT request_id, COUNT(*) AS match_count, SUM(matched_qty) AS allocated
+            FROM matches
+            WHERE match_status <> 'REJECTED'
+            GROUP BY request_id
+        ) m ON r.request_id = m.request_id
         GROUP BY r.zone
         ORDER BY fulfillment_pct ASC
         """
