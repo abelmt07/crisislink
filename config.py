@@ -6,13 +6,16 @@ Central configuration for CrisisLink.
 Defaults point at the local Docker setup (docker compose up -d).
 To use your own MySQL or MongoDB Atlas instead, change these values.
 """
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 # SQL (MySQL). Matches MYSQL_ROOT_PASSWORD in docker-compose.yml.
 SQL_CONFIG = {
     "host": "localhost",
     "port": 3306,
-    "user": "root",
-    "password": "crisislink_docker_pw",
+    "user": os.getenv("MYSQL_USER", "root"),
+    "password": os.getenv("MYSQL_PASSWORD"),
     "database": "crisislink",
 }
 

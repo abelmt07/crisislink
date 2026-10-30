@@ -65,6 +65,7 @@ PAGES = {
     "match": ("Run Auto-Match", "bolt"),
     "sql": ("SQL Reports", "database"),
     "mongo": ("MongoDB Logs", "data_object"),
+    "tables": ("Browse Tables", "table_view"),
 }
 
 SQL_REPORTS = {
@@ -78,6 +79,16 @@ MONGO_VIEWS = [
     "Critical Reports with Events (Lookup)",
     "Recent System Events",
 ]
+
+# Browse Tables page: each entry uses ONLY a public function from the existing backend.
+# No SQL is written in app.py and no private helpers are called.
+BROWSE_SOURCES = {
+    "requests (all columns)": db_sql.get_all_requests,
+    "supplies (all columns)": db_sql.get_all_supplies,
+    "matches (joined report)": db_sql.get_all_matches,
+    "organizations (active, summary)": db_sql.get_all_organizations,
+}
+ROW_LIMITS = [50, 200, 1000]
 
 ENTITY_COLORS = {
     "REQUEST": "#FF4B4B",
@@ -1402,12 +1413,29 @@ def page_mongo() -> None:
             st.html(_panel(timeline_html(rows, wide=True)))
 
 
+def page_tables() -> None:
+    head, pick = st.columns([5, 4], vertical_alignment="bottom")
+    with head:
+        st.html(page_header("Command / Browse tables", "Browse Tables",
+                            "Full rows from the backend's public read functions, newest first."))
+    with pick:
+        choice = st.selectbox("Table", list(BROWSE_SOURCES), key="browse_table")
+        limit = st.selectbox("Rows", ROW_LIMITS, index=1, key="browse_limit")
+
+    rows = safe_call(BROWSE_SOURCES[choice], label="SQL")
+    if rows is not None:
+        shown = rows[:int(limit)]
+        st.html(table_html(shown, choice.split(" (")[0],
+                           f"{len(rows)} total, showing {len(shown)}"))
+
+
 PAGE_FUNCS = {
     "dashboard": page_dashboard,
     "add": page_add,
     "match": page_match,
     "sql": page_sql,
     "mongo": page_mongo,
+    "tables": page_tables,
 }
 
 RADAR_URI = _radar_background()
