@@ -3,26 +3,40 @@ config.py
 ---------
 Central configuration for CrisisLink.
 
-Defaults point at the local Docker setup (docker compose up -d).
-To use your own MySQL or MongoDB Atlas instead, change these values.
+Values are read in this order:
+1. Environment variables (your .env file or the shell)
+2. Streamlit secrets (when deployed on Streamlit Community Cloud)
+3. The local Docker defaults below
 """
+
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
-# SQL (MySQL). Matches MYSQL_ROOT_PASSWORD in docker-compose.yml.
+
+
+def _setting(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None:
+        try:
+            import streamlit as st
+            value = st.secrets.get(name)
+        except Exception:
+            value = None
+    return value if value is not None else default
+
+
 SQL_CONFIG = {
-    "host": os.getenv("MYSQL_HOST", "localhost"),
-    "port": int(os.getenv("MYSQL_PORT", 3306)),
-    "user": os.getenv("MYSQL_USER", "root"),
-    "password": os.getenv("MYSQL_PASSWORD"),
+    "host": _setting("MYSQL_HOST", "localhost"),
+    "port": int(_setting("MYSQL_PORT", "3306")),
+    "user": _setting("MYSQL_USER", "root"),
+    "password": _setting("MYSQL_PASSWORD", ""),
     "database": "crisislink",
     "ssl_disabled": False,
 }
 
-# MongoDB. Local Docker instance by default.
-# For Atlas: "mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/"
 MONGO_CONFIG = {
-    "uri": "mongodb://localhost:27017/",
-    "database": "crisislink_nosql",
+    "uri": _setting("MONGO_URI", "mongodb://localhost:27017/"),
+    "database": _setting("MONGO_DB", "crisislink_nosql"),
 }
