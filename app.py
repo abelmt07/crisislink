@@ -1472,7 +1472,7 @@ def main() -> None:
                                "1.50 or newer. Run <span class='mono'>pip install -U streamlit</span> for the intended look."))
     PAGE_FUNCS[page]()
 
-    st.html('<div class="footer">CrisisLink | SDG 11 &amp; 17 | Database Concepts Lab</div>')
+    st.html('<div class="footer">CrisisLink | SDG 11 &amp; 17 | Portfolio Project</div>')
 
 
 main()
