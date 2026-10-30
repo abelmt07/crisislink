@@ -54,7 +54,7 @@ CREATE TABLE matches (
     supply_id       INT NOT NULL,
     matched_qty     INT NOT NULL,
     match_score     DECIMAL(5,2) NOT NULL,
-    match_status    ENUM('PENDING', 'CONFIRMED', 'REJECTED', 'COMPLETED') DEFAULT 'PENDING',
+    match_status    ENUM('PENDING', 'CONFIRMED', 'DISPATCHED', 'REJECTED', 'COMPLETED') DEFAULT 'PENDING',    
     matched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (request_id) REFERENCES requests(request_id),
     FOREIGN KEY (supply_id) REFERENCES supplies(supply_id),
@@ -184,13 +184,3 @@ BEGIN
 END //
 
 DELIMITER ;
-
-CREATE USER IF NOT EXISTS 'crisislink_admin'@'%' IDENTIFIED BY 'admin_pass_123';
-GRANT ALL PRIVILEGES ON crisislink.* TO 'crisislink_admin'@'%';
-
-CREATE USER IF NOT EXISTS 'crisislink_org'@'%' IDENTIFIED BY 'org_pass_123';
-GRANT SELECT, INSERT, UPDATE ON crisislink.requests TO 'crisislink_org'@'%';
-GRANT SELECT, INSERT, UPDATE ON crisislink.supplies TO 'crisislink_org'@'%';
-GRANT SELECT ON crisislink.matches TO 'crisislink_org'@'%';
-
-FLUSH PRIVILEGES;

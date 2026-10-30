@@ -12,6 +12,8 @@ from mysql.connector import Error # type: ignore
 
 from config import SQL_CONFIG
 from models import Organization, Request, Supply
+from datetime import datetime
+from db_nosql import insert_event
 
 
 def get_connection():
@@ -139,19 +141,23 @@ def get_situation_report() -> list:
     """Query 5: read the v_situation_report view."""
     return _fetch_all("SELECT * FROM v_situation_report")
 
-
 def get_unmet_requests() -> list:
-    """Query 3: open requests with no CONFIRMED match, via a NOT IN sub-query."""
+    """Query 3: requests still short of stock (OPEN or PARTIAL), with the unmet amount."""
     return _fetch_all(
         """
         SELECT r.request_id, r.resource_name, r.quantity, r.urgency,
-               o.org_name, r.zone, r.created_at
+               o.org_name, r.zone, r.created_at,
+               r.quantity - COALESCE(m.allocated, 0) AS unmet_qty
         FROM requests r
         INNER JOIN organizations o ON r.org_id = o.org_id
-        WHERE r.status = 'OPEN'
-        AND r.request_id NOT IN (
-                        SELECT DISTINCT request_id FROM matches WHERE match_status <> 'REJECTED'
-        )
+        LEFT JOIN (
+            SELECT request_id, SUM(matched_qty) AS allocated
+            FROM matches
+            WHERE match_status <> 'REJECTED'
+            GROUP BY request_id
+        ) m ON r.request_id = m.request_id
+        WHERE r.status IN ('OPEN', 'PARTIAL')
+          AND r.quantity > COALESCE(m.allocated, 0)
         ORDER BY FIELD(r.urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), r.created_at ASC
         """
     )
@@ -203,3 +209,113 @@ def dispatch_supply(supply_id: int, qty_to_dispatch: int) -> dict:
     finally:
         cursor.close()
         conn.close()
+
+
+# ------------------------------------------------------------
+# MATCH LIFECYCLE
+# PENDING -> CONFIRMED -> DISPATCHED -> COMPLETED
+# PENDING or CONFIRMED -> REJECTED (quantity returns to the supply)
+# ------------------------------------------------------------
+
+MATCH_TRANSITIONS = {
+    "confirm":  (("PENDING",), "CONFIRMED"),
+    "dispatch": (("CONFIRMED",), "DISPATCHED"),
+    "deliver":  (("DISPATCHED",), "COMPLETED"),
+    "reject":   (("PENDING", "CONFIRMED"), "REJECTED"),
+}
+
+
+def _recompute_request_status(cursor, request_id: int) -> str:
+    """Set a request's status from its non-rejected matches and return it."""
+    cursor.execute("SELECT quantity, status FROM requests WHERE request_id = %s FOR UPDATE",
+                   (request_id,))
+    req = cursor.fetchone()
+    if req is None or req["status"] == "CANCELLED":
+        return req["status"] if req else None
+
+    cursor.execute(
+        "SELECT match_status, matched_qty FROM matches "
+        "WHERE request_id = %s AND match_status <> 'REJECTED'",
+        (request_id,))
+    rows = cursor.fetchall()
+    allocated = sum(r["matched_qty"] for r in rows)
+    statuses = {r["match_status"] for r in rows}
+
+    if allocated == 0:
+        new_status = "OPEN"
+    elif allocated < req["quantity"]:
+        new_status = "PARTIAL"
+    elif statuses == {"COMPLETED"}:
+        new_status = "DELIVERED"
+    elif statuses <= {"DISPATCHED", "COMPLETED"}:
+        new_status = "DISPATCHED"
+    else:
+        new_status = "MATCHED"
+
+    cursor.execute("UPDATE requests SET status = %s WHERE request_id = %s",
+                   (new_status, request_id))
+    return new_status
+
+
+def advance_match(match_id: int, action: str, actor_name: str) -> dict:
+    """
+    Move a match through its lifecycle, keep the supply and request in step,
+    and write an audit event. Rejecting a match returns its quantity to the supply.
+    Raises ValueError if the action is unknown or not allowed from the current state.
+    """
+    if action not in MATCH_TRANSITIONS:
+        raise ValueError(f"Unknown action: {action}")
+    allowed_from, to_state = MATCH_TRANSITIONS[action]
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        conn.start_transaction()
+        cursor.execute("SELECT * FROM matches WHERE match_id = %s FOR UPDATE", (match_id,))
+        match = cursor.fetchone()
+        if match is None:
+            raise ValueError(f"No match with id {match_id}")
+        old_status = match["match_status"]
+        if old_status not in allowed_from:
+            raise ValueError(f"Cannot {action} match {match_id}: it is {old_status}")
+
+        if to_state == "REJECTED":
+            cursor.execute("UPDATE supplies SET quantity = quantity + %s WHERE supply_id = %s",
+                           (match["matched_qty"], match["supply_id"]))
+            cursor.execute("UPDATE supplies SET status = 'AVAILABLE' "
+                           "WHERE supply_id = %s AND status = 'DEPLETED' AND quantity > 0",
+                           (match["supply_id"],))
+
+        cursor.execute("UPDATE matches SET match_status = %s WHERE match_id = %s",
+                       (to_state, match_id))
+        new_request_status = _recompute_request_status(cursor, match["request_id"])
+
+        cursor.execute("SELECT zone FROM requests WHERE request_id = %s", (match["request_id"],))
+        zone = cursor.fetchone()["zone"]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+    insert_event({
+        "event_id": f"EV-{datetime.now():%Y%m%d%H%M%S%f}",
+        "entity_type": "MATCH",
+        "entity_id": match_id,
+        "action": action.upper(),
+        "actor_name": actor_name,
+        "zone": zone,
+        "timestamp": datetime.now(),
+        "details": {
+            "from": old_status,
+            "to": to_state,
+            "request_id": match["request_id"],
+            "supply_id": match["supply_id"],
+            "matched_qty": match["matched_qty"],
+            "request_status": new_request_status,
+        },
+    })
+    return {"match_id": match_id, "from": old_status, "to": to_state,
+            "request_status": new_request_status}
