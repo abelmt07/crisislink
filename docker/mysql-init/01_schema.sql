@@ -92,11 +92,18 @@ BEGIN
     DECLARE v_sup_qty INT;
     DECLARE v_alloc INT;
 
-    DECLARE req_cur CURSOR FOR
-        SELECT request_id, zone, urgency, quantity, quantity, resource_type
-        FROM requests
-        WHERE status = 'OPEN'
-        ORDER BY FIELD(urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), request_id;
+        DECLARE req_cur CURSOR FOR
+        SELECT r.request_id, r.zone, r.urgency, r.quantity,
+               r.quantity - COALESCE((SELECT SUM(m.matched_qty) FROM matches m
+                                      WHERE m.request_id = r.request_id
+                                        AND m.match_status <> 'REJECTED'), 0),
+               r.resource_type
+        FROM requests r
+        WHERE r.status IN ('OPEN', 'PARTIAL')
+          AND r.quantity > COALESCE((SELECT SUM(m.matched_qty) FROM matches m
+                                     WHERE m.request_id = r.request_id
+                                       AND m.match_status <> 'REJECTED'), 0)
+        ORDER BY FIELD(r.urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), r.request_id;
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
 
     OPEN req_cur;
@@ -152,11 +159,16 @@ BEGIN
             SET v_remaining = v_remaining - v_alloc;
         END WHILE;
 
-            IF v_remaining = 0 THEN
-                UPDATE requests SET status = 'MATCHED' WHERE request_id = v_req_id;
-            ELSEIF v_remaining < v_orig_qty THEN
-                UPDATE requests SET status = 'PARTIAL' WHERE request_id = v_req_id;
-            END IF;
+                    UPDATE requests r
+        SET r.status = CASE
+            WHEN COALESCE((SELECT SUM(m.matched_qty) FROM matches m
+                           WHERE m.request_id = r.request_id
+                             AND m.match_status <> 'REJECTED'), 0) >= r.quantity
+            THEN 'MATCHED' ELSE 'PARTIAL' END
+        WHERE r.request_id = v_req_id
+          AND EXISTS (SELECT 1 FROM matches m
+                      WHERE m.request_id = r.request_id
+                        AND m.match_status <> 'REJECTED');
     END LOOP;
     CLOSE req_cur;
 END //
