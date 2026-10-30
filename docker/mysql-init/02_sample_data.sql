@@ -27,11 +27,5 @@ INSERT INTO supplies (org_id, resource_type, resource_name, quantity, unit, zone
 (2, 'EQUIPMENT', 'Water Pumps', 15, 'units', 'Zone-A'),
 (4, 'MEDICINE', 'Insulin Vials', 80, 'vials', 'Zone-B');
 
-INSERT INTO matches (request_id, supply_id, matched_qty, match_score, match_status) VALUES
-(1, 1, 300, 85.50, 'CONFIRMED'),
-(2, 2, 200, 90.00, 'CONFIRMED'),
-(3, 3, 100, 88.00, 'PENDING'),
-(4, 4, 150, 75.00, 'CONFIRMED'),
-(5, 5, 400, 82.00, 'PENDING'),
-(6, 8, 50, 95.00, 'CONFIRMED'),
-(7, 6, 100, 70.00, 'PENDING');
+CALL auto_match_requests();
+

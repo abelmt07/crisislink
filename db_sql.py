@@ -8,7 +8,7 @@ All MySQL operations: connection handling, inserts, the advanced queries
 import logging
 
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error # type: ignore
 
 from config import SQL_CONFIG
 from models import Organization, Request, Supply

@@ -25,8 +25,7 @@ CREATE TABLE requests (
     unit            VARCHAR(20) DEFAULT 'units',
     urgency         ENUM('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') NOT NULL,
     zone            VARCHAR(50) NOT NULL,
-    status          ENUM('OPEN', 'MATCHED', 'DISPATCHED', 'DELIVERED', 'CANCELLED') DEFAULT 'OPEN',
-    description     TEXT,
+    status          ENUM('OPEN', 'MATCHED', 'PARTIAL', 'DISPATCHED', 'DELIVERED', 'CANCELLED') DEFAULT 'OPEN',    description     TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (org_id) REFERENCES organizations(org_id),
@@ -81,31 +80,85 @@ DELIMITER //
 
 CREATE PROCEDURE auto_match_requests()
 BEGIN
-    INSERT INTO matches (request_id, supply_id, matched_qty, match_score, match_status)
-    SELECT
-        r.request_id,
-        s.supply_id,
-        LEAST(r.quantity, s.quantity),
-        CASE WHEN s.zone = r.zone THEN 90 ELSE 60 END
-          + CASE r.urgency WHEN 'CRITICAL' THEN 10 WHEN 'HIGH' THEN 5 ELSE 0 END AS score,
-        'PENDING'
-    FROM requests r
-    INNER JOIN supplies s ON r.resource_type = s.resource_type
-    WHERE r.status = 'OPEN'
-    AND s.status = 'AVAILABLE'
-    AND s.quantity > 0
-    AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.request_id = r.request_id)
-    ORDER BY
-        FIELD(r.urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
-        CASE WHEN s.zone = r.zone THEN 0 ELSE 1 END
-    LIMIT 10;
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE v_req_id INT;
+    DECLARE v_req_zone VARCHAR(50);
+    DECLARE v_urgency VARCHAR(10);
+    DECLARE v_orig_qty INT;
+    DECLARE v_remaining INT;
+    DECLARE v_type VARCHAR(20);
+    DECLARE v_sup_id INT;
+    DECLARE v_sup_zone VARCHAR(50);
+    DECLARE v_sup_qty INT;
+    DECLARE v_alloc INT;
 
-    UPDATE requests
-    SET status = 'MATCHED'
-    WHERE request_id IN (SELECT DISTINCT request_id FROM matches)
-    AND status = 'OPEN';
+    DECLARE req_cur CURSOR FOR
+        SELECT request_id, zone, urgency, quantity, quantity, resource_type
+        FROM requests
+        WHERE status = 'OPEN'
+        ORDER BY FIELD(urgency, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), request_id;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
 
-    SELECT ROW_COUNT() AS matches_created;
+    OPEN req_cur;
+    req_loop: LOOP
+        FETCH req_cur INTO v_req_id, v_req_zone, v_urgency, v_orig_qty, v_remaining, v_type;
+        IF done THEN
+            LEAVE req_loop;
+        END IF;
+
+        fill_loop: WHILE v_remaining > 0 DO
+            SET v_sup_id = NULL;
+            BEGIN
+                DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_sup_id = NULL;
+                SELECT supply_id, zone, quantity INTO v_sup_id, v_sup_zone, v_sup_qty
+                FROM supplies
+                WHERE resource_type = v_type
+                  AND status = 'AVAILABLE'
+                  AND quantity > 0
+                ORDER BY
+                    (CASE WHEN zone = v_req_zone THEN 50 ELSE 10 END
+                     + CASE WHEN quantity >= v_orig_qty THEN 20
+                            ELSE 20 * quantity / NULLIF(v_orig_qty, 0) END) DESC,
+                    supply_id
+                LIMIT 1;
+            END;
+
+            IF v_sup_id IS NULL THEN
+                LEAVE fill_loop;
+            END IF;
+
+            SET v_alloc = LEAST(v_remaining, v_sup_qty);
+
+            INSERT INTO matches (request_id, supply_id, matched_qty, match_score, match_status)
+            VALUES (
+                v_req_id,
+                v_sup_id,
+                v_alloc,
+                ROUND(
+                    CASE WHEN v_sup_zone = v_req_zone THEN 50 ELSE 10 END
+                    + CASE v_urgency WHEN 'CRITICAL' THEN 30 WHEN 'HIGH' THEN 20
+                                     WHEN 'MEDIUM' THEN 10 WHEN 'LOW' THEN 5 ELSE 0 END
+                    + CASE WHEN v_sup_qty >= v_orig_qty THEN 20
+                           ELSE 20 * v_sup_qty / NULLIF(v_orig_qty, 0) END
+                , 2),
+                'PENDING'
+            );
+
+            UPDATE supplies
+            SET status = IF(quantity - v_alloc <= 0, 'DEPLETED', status),
+                quantity = quantity - v_alloc
+            WHERE supply_id = v_sup_id;
+
+            SET v_remaining = v_remaining - v_alloc;
+        END WHILE;
+
+            IF v_remaining = 0 THEN
+                UPDATE requests SET status = 'MATCHED' WHERE request_id = v_req_id;
+            ELSEIF v_remaining < v_orig_qty THEN
+                UPDATE requests SET status = 'PARTIAL' WHERE request_id = v_req_id;
+            END IF;
+    END LOOP;
+    CLOSE req_cur;
 END //
 
 CREATE TRIGGER trg_supply_depleted
