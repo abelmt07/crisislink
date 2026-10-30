@@ -833,8 +833,7 @@ def queue_html(rows: list) -> str:
 
 # Status chips: value -> colour class
 _CHIP = {
-    "OPEN": "info", "MATCHED": "info", "DISPATCHED": "warn", "DELIVERED": "ok", "CANCELLED": "bad",
-    "AVAILABLE": "ok", "RESERVED": "warn", "DEPLETED": "bad",
+    "OPEN": "info", "MATCHED": "info", "PARTIAL": "warn", "DISPATCHED": "warn", "DELIVERED": "ok", "CANCELLED": "bad",    "AVAILABLE": "ok", "RESERVED": "warn", "DEPLETED": "bad",
     "PENDING": "warn", "CONFIRMED": "ok", "REJECTED": "bad", "COMPLETED": "ok",
 }
 _SCORE_COLS = {"match_score", "fulfillment_pct"}
