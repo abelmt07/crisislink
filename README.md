@@ -4,6 +4,7 @@ CrisisLink helps NGOs, government agencies, and volunteer groups coordinate reso
 
 Built for **Database Concepts for Data Science Lab (TEE7423)**, ESE Mini-Project.
 
+**Live demo:** https://https://crisislink.streamlit.app/
 ## SDG Alignment
 
 - **SDG 11: Sustainable Cities & Communities (Target 11.5):** reduces the time between a shortage appearing on the ground and a matching supply being dispatched.
