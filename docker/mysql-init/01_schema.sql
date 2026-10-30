@@ -63,9 +63,6 @@ CREATE TABLE matches (
     UNIQUE KEY uk_request_supply (request_id, supply_id)
 );
 
-CREATE INDEX idx_supplies_resource_type ON supplies(resource_type);
-CREATE INDEX idx_matches_status ON matches(match_status);
-
 CREATE VIEW v_situation_report AS
 SELECT
     r.zone,
