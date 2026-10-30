@@ -1,2 +1,4 @@
-mysql-connector-python==8.2.0
+mysql-connector-python>=26.10.0
 pymongo==4.6.0
+python-dotenv==1.2.4
+streamlit==1.66.1
