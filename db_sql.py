@@ -30,16 +30,14 @@ def _get_pool():
             if _pool is None:
                 _pool = pooling.MySQLConnectionPool(
                     pool_name="crisislink", pool_size=5,
-                    pool_reset_session=True, **SQL_CONFIG)
+                    pool_reset_session=False, **SQL_CONFIG)
     return _pool
 
 
 def get_connection():
-    """Check a connection out of the shared pool. Calling close() returns it to the pool."""
+    """Check a connection out of the shared pool. Calling close() returns it."""
     try:
-        conn = _get_pool().get_connection()
-        conn.ping(reconnect=True, attempts=2, delay=1)  # recovers if Aiven restarted
-        return conn
+        return _get_pool().get_connection()
     except Error as e:
         logging.error(f"SQL connection error: {e}")
         raise

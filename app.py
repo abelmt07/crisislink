@@ -1012,6 +1012,7 @@ def _action_row(submit_label: str):
 
 
 def _after_insert(kind: str, new_id: int, banner_slot, audit_ok: bool, title: str) -> None:
+    st.cache_data.clear()
     msg = f"<b>{escape(title)}</b> saved with ID {new_id}."
     banner_slot.html(banner("ok", msg))
     if not audit_ok:
@@ -1202,6 +1203,32 @@ def _panel(inner: str) -> str:
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
+# Cached reads: each Aiven query costs about 265 ms of round trip, so reruns
+# within the TTL reuse the result. Writes call st.cache_data.clear().
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_situation():
+    return db_sql.get_situation_report()
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_summary():
+    return db_sql.get_zone_summary()
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_requests():
+    return db_sql.get_all_requests()
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_unmet():
+    return db_sql.get_unmet_requests()
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_events():
+    return db_nosql.get_recent_events(3)
+
 def page_dashboard() -> None:
     st.session_state["last_sync"] = datetime.now().strftime("%H:%M:%S")
 
@@ -1215,11 +1242,11 @@ def page_dashboard() -> None:
             st.button("Refresh", icon=":material/refresh:", key="refresh", type="tertiary",
                       on_click=probe_health.clear)
 
-    situation = safe_call(db_sql.get_situation_report, label="SQL") or []
-    summary = safe_call(db_sql.get_zone_summary, label="SQL") or []
-    requests = safe_call(db_sql.get_all_requests, label="SQL") or []
-    unmet = safe_call(db_sql.get_unmet_requests, label="SQL") or []
-    events = safe_call(db_nosql.get_recent_events, 3, label="MongoDB") or []
+        situation = safe_call(_cached_situation, label="SQL") or []
+    summary = safe_call(_cached_summary, label="SQL") or []
+    requests = safe_call(_cached_requests, label="SQL") or []
+    unmet = safe_call(_cached_unmet, label="SQL") or []
+    events = safe_call(_cached_events, label="MongoDB") or []
 
     sql_down = "SQL" in _SEEN
     open_req = None if sql_down else sum(int(r.get("open_requests") or 0) for r in situation)
@@ -1310,6 +1337,7 @@ def page_match() -> None:
             with st.spinner("Matching requests to available supplies..."):
                 before = safe_call(db_sql.get_all_matches, label="SQL")
                 returned = safe_call(db_sql.run_auto_match, label="Auto-match")
+                st.cache_data.clear()
                 time.sleep(0.7)  # short minimum so the scanning state is perceptible
                 after = safe_call(db_sql.get_all_matches, label="SQL")
             if returned is not None:
@@ -1446,6 +1474,7 @@ ACTION_ICONS = {"confirm": ":material/task_alt:", "dispatch": ":material/local_s
 
 def _run_match_action(match_id: int, action: str) -> None:
     """Button callback: apply one lifecycle step and store a message for the next render."""
+    st.cache_data.clear()
     actor = (st.session_state.get("actor") or "").strip() or "Coordinator"
     received = st.session_state.get(f"recv_{match_id}") if action == "deliver" else None
     try:
