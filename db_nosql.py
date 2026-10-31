@@ -10,12 +10,20 @@ from datetime import datetime
 from pymongo import MongoClient
 
 from config import MONGO_CONFIG
+import threading
+
+_client = None
+_client_lock = threading.Lock()
 
 
 def get_db():
-    """Return a handle to the CrisisLink MongoDB database."""
-    client = MongoClient(MONGO_CONFIG["uri"], serverSelectionTimeoutMS=5000)
-    return client[MONGO_CONFIG["database"]]
+    """Return the CrisisLink database, reusing one MongoClient for the whole process."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = MongoClient(MONGO_CONFIG["uri"], serverSelectionTimeoutMS=5000)
+    return _client[MONGO_CONFIG["database"]]
 
 
 def insert_field_report(report: dict) -> str:

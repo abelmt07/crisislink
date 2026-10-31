@@ -8,6 +8,8 @@ All MySQL operations: connection handling, inserts, the advanced queries
 import logging
 
 import mysql.connector
+import threading
+from mysql.connector import pooling
 from mysql.connector import Error # type: ignore
 
 from config import SQL_CONFIG
@@ -16,10 +18,28 @@ from datetime import datetime
 from db_nosql import insert_event
 
 
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool():
+    """Create the connection pool once, then reuse it for every query."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = pooling.MySQLConnectionPool(
+                    pool_name="crisislink", pool_size=5,
+                    pool_reset_session=True, **SQL_CONFIG)
+    return _pool
+
+
 def get_connection():
-    """Open and return a new MySQL connection using SQL_CONFIG."""
+    """Check a connection out of the shared pool. Calling close() returns it to the pool."""
     try:
-        return mysql.connector.connect(**SQL_CONFIG)
+        conn = _get_pool().get_connection()
+        conn.ping(reconnect=True, attempts=2, delay=1)  # recovers if Aiven restarted
+        return conn
     except Error as e:
         logging.error(f"SQL connection error: {e}")
         raise
