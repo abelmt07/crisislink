@@ -53,6 +53,7 @@ CREATE TABLE matches (
     request_id      INT NOT NULL,
     supply_id       INT NOT NULL,
     matched_qty     INT NOT NULL,
+    shortfall_qty   INT NOT NULL DEFAULT 0,
     match_score     DECIMAL(5,2) NOT NULL,
     match_status    ENUM('PENDING', 'CONFIRMED', 'DISPATCHED', 'REJECTED', 'COMPLETED') DEFAULT 'PENDING',    
     matched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -122,6 +123,10 @@ BEGIN
                 WHERE resource_type = v_type
                   AND status = 'AVAILABLE'
                   AND quantity > 0
+                  AND NOT EXISTS (SELECT 1 FROM matches m
+                                  WHERE m.request_id = v_req_id
+                                    AND m.supply_id = supplies.supply_id
+                                    AND m.match_status = 'REJECTED')
                 ORDER BY
                     (CASE WHEN zone = v_req_zone THEN 50 ELSE 10 END
                      + CASE WHEN quantity >= v_orig_qty THEN 20

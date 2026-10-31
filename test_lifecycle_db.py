@@ -47,14 +47,29 @@ class TestMatchLifecycle(unittest.TestCase):
 
     def test_full_flow_completes_match_and_logs_each_step(self):
         mid = _match_id(1, 1)
-        for action in ("confirm", "dispatch", "deliver"):
-            advance_match(mid, action, "test")
+        advance_match(mid, "confirm", "test")
+        advance_match(mid, "dispatch", "test")
+        advance_match(mid, "deliver", "test", received_qty=300)
         self.assertEqual(_match_status(mid), "COMPLETED")
         # Request 1 still has a pending match on supply 6, so it stays PARTIAL
         self.assertEqual(_request_status(1), "PARTIAL")
         logged = get_db().event_stream.count_documents(
             {"entity_type": "MATCH", "entity_id": mid})
         self.assertGreaterEqual(logged, 3)
+
+    def test_shortfall_is_recorded_and_reopens_request(self):
+        mid = _match_id(6, 3)
+        dispatched = _query_one("SELECT matched_qty FROM matches WHERE match_id = %s",
+                                (mid,))["matched_qty"]
+        advance_match(mid, "confirm", "test")
+        advance_match(mid, "dispatch", "test")
+        result = advance_match(mid, "deliver", "test", received_qty=dispatched - 10)
+        row = _query_one("SELECT matched_qty, shortfall_qty FROM matches WHERE match_id = %s",
+                         (mid,))
+        self.assertEqual(row["matched_qty"], dispatched - 10)
+        self.assertEqual(row["shortfall_qty"], 10)
+        self.assertEqual(result["shortfall_qty"], 10)
+        self.assertEqual(_request_status(6), "PARTIAL")
 
     def test_reject_returns_quantity_to_supply(self):
         mid = _match_id(1, 6)

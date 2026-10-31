@@ -257,18 +257,28 @@ def _recompute_request_status(cursor, request_id: int) -> str:
     return new_status
 
 
-def advance_match(match_id: int, action: str, actor_name: str) -> dict:
+def advance_match(match_id: int, action: str, actor_name: str,
+                  received_qty: int | None = None) -> dict:
     """
     Move a match through its lifecycle, keep the supply and request in step,
-    and write an audit event. Rejecting a match returns its quantity to the supply.
-    Raises ValueError if the action is unknown or not allowed from the current state.
+    and write an audit event. Rejecting returns the quantity to the supply.
+    Delivering records how much arrived. Any shortfall is kept in shortfall_qty
+    and the unmet amount reopens for re-matching.
+    Raises ValueError if the action is unknown, not allowed from the current
+    state, or the received quantity is invalid.
     """
     if action not in MATCH_TRANSITIONS:
         raise ValueError(f"Unknown action: {action}")
     allowed_from, to_state = MATCH_TRANSITIONS[action]
+    if action == "deliver":
+        if received_qty is None:
+            raise ValueError("Enter the quantity that arrived before marking delivered.")
+        if received_qty < 1:
+            raise ValueError("Received quantity must be at least 1.")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
+    shortfall = 0
     try:
         conn.start_transaction()
         cursor.execute("SELECT * FROM matches WHERE match_id = %s FOR UPDATE", (match_id,))
@@ -286,8 +296,18 @@ def advance_match(match_id: int, action: str, actor_name: str) -> dict:
                            "WHERE supply_id = %s AND status = 'DEPLETED' AND quantity > 0",
                            (match["supply_id"],))
 
-        cursor.execute("UPDATE matches SET match_status = %s WHERE match_id = %s",
-                       (to_state, match_id))
+        if action == "deliver":
+            if received_qty > match["matched_qty"]:
+                raise ValueError(f"Received {received_qty} but only "
+                                 f"{match['matched_qty']} were dispatched.")
+            shortfall = match["matched_qty"] - received_qty
+            cursor.execute("UPDATE matches SET match_status = %s, matched_qty = %s, "
+                           "shortfall_qty = %s WHERE match_id = %s",
+                           (to_state, received_qty, shortfall, match_id))
+        else:
+            cursor.execute("UPDATE matches SET match_status = %s WHERE match_id = %s",
+                           (to_state, match_id))
+
         new_request_status = _recompute_request_status(cursor, match["request_id"])
 
         cursor.execute("SELECT zone FROM requests WHERE request_id = %s", (match["request_id"],))
@@ -313,9 +333,11 @@ def advance_match(match_id: int, action: str, actor_name: str) -> dict:
             "to": to_state,
             "request_id": match["request_id"],
             "supply_id": match["supply_id"],
-            "matched_qty": match["matched_qty"],
+            "dispatched_qty": match["matched_qty"],
+            "received_qty": received_qty if action == "deliver" else None,
+            "shortfall_qty": shortfall,
             "request_status": new_request_status,
         },
     })
     return {"match_id": match_id, "from": old_status, "to": to_state,
-            "request_status": new_request_status}
+            "request_status": new_request_status, "shortfall_qty": shortfall}

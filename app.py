@@ -63,6 +63,7 @@ PAGES = {
     "dashboard": ("Live Dashboard", "monitoring"),
     "add": ("Add Data", "add_circle"),
     "match": ("Run Auto-Match", "bolt"),
+    "flow": ("Match Workflow", "conversion_path"),
     "sql": ("SQL Reports", "database"),
     "mongo": ("MongoDB Logs", "data_object"),
     "tables": ("Browse Tables", "table_view"),
@@ -70,8 +71,8 @@ PAGES = {
 
 SQL_REPORTS = {
     "Match Report (JOIN)": (db_sql.get_all_matches, "Joins matches, requests, supplies and both organizations"),
-    "Zone Summary (GROUP BY)": (db_sql.get_zone_summary, "Requested against confirmed quantity, grouped by zone"),
-    "Unmet Requests (Sub-query)": (db_sql.get_unmet_requests, "Open requests with no confirmed match, most urgent first"),
+    "Zone Summary (GROUP BY)": (db_sql.get_zone_summary, "Requested against committed quantity, grouped by zone"),
+    "Unmet Requests (Sub-query)": (db_sql.get_unmet_requests, "Requests still short of stock, most urgent first"),
 }
 
 MONGO_VIEWS = [
@@ -339,6 +340,12 @@ button[data-testid="stBaseButton-tertiary"] {
 button[data-testid="stBaseButton-tertiary"]:hover { background: var(--s3) !important; color: var(--t1) !important; }
 button[data-testid^="stBaseButton"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button[data-testid^="stBaseButton"] [data-testid="stIconMaterial"] { font-size: 18px; }
+button[data-testid^="stBaseButton"]:disabled {
+  background: var(--s3) !important; color: var(--t3) !important; border-color: var(--line) !important;
+  box-shadow: none !important; transform: none !important; opacity: .55; cursor: not-allowed;
+}
+button[data-testid^="stBaseButton"]:disabled p { color: var(--t3) !important; }
+
 
 /* ---------- Inputs (Streamlit 1.6x markup) ---------- */
 [data-testid="stWidgetLabel"] p, label[data-testid="stWidgetLabel"] {
@@ -1427,11 +1434,85 @@ def page_tables() -> None:
         st.html(table_html(shown, choice.split(" (")[0],
                            f"{len(rows)} total, showing {len(shown)}"))
 
+# ---------------------------------------------------------------------------
+# Match workflow page (confirm, dispatch, deliver, reject)
+# ---------------------------------------------------------------------------
+ACTION_ORDER = ["confirm", "dispatch", "deliver", "reject"]
+ACTION_LABELS = {"confirm": "Confirm match", "dispatch": "Mark dispatched",
+                 "deliver": "Mark delivered", "reject": "Reject match"}
+ACTION_ICONS = {"confirm": ":material/task_alt:", "dispatch": ":material/local_shipping:",
+                "deliver": ":material/done_all:", "reject": ":material/block:"}
+
+
+def _run_match_action(match_id: int, action: str) -> None:
+    """Button callback: apply one lifecycle step and store a message for the next render."""
+    actor = (st.session_state.get("actor") or "").strip() or "Coordinator"
+    received = st.session_state.get(f"recv_{match_id}") if action == "deliver" else None
+    try:
+        result = db_sql.advance_match(match_id, action, actor, received_qty=received)
+        msg = (f"Match #{match_id} moved from {result['from']} to {result['to']}. "
+               f"Request is now {result['request_status']}.")
+        if result.get("shortfall_qty"):
+            msg += f" Shortfall of {result['shortfall_qty']} units reopened for re-matching."
+        st.session_state["flash"] = ("ok", msg)
+    except ValueError as exc:
+        st.session_state["flash"] = ("err", str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("advance_match failed")
+        st.session_state["flash"] = ("err", f"Could not update match #{match_id}: {str(exc)[:160]}")
+
+def page_flow() -> None:
+    st.html(page_header("Command / Match workflow", "Match Workflow",
+                        "Confirm, dispatch and close matches. Every step is written to the audit trail."))
+    flash = st.session_state.pop("flash", None)
+    if flash:
+        st.html(banner(flash[0], escape(flash[1])))
+
+    rows = safe_call(db_sql.get_all_matches, label="SQL")
+    if rows is None:
+        return
+    open_rows = [r for r in rows if r["match_status"] not in ("COMPLETED", "REJECTED")]
+    if not open_rows:
+        st.html(empty_state("task_alt", "No matches are waiting on action. Run auto-match to create new ones."))
+        return
+
+    labels = {r["match_id"]: f"#{r['match_id']}  {r['requested_item']} for {r['requesting_org']} "
+                             f"({r['match_status']})" for r in open_rows}
+    left, right = st.columns([3, 2], gap="large")
+    with left:
+        cols = ("match_id", "requested_item", "requesting_org", "supplied_item",
+                "supplying_org", "matched_qty", "match_status")
+        st.html(table_html([{c: r.get(c) for c in cols} for r in open_rows],
+                           "matches", f"{len(open_rows)} awaiting action"))
+    with right:
+        mid = st.selectbox("Match", list(labels), format_func=lambda m: labels[m], key="flow_match")
+        row = next(r for r in open_rows if r["match_id"] == mid)
+        st.text_input("Acting as", value="Coordinator", key="actor")
+        st.html(
+            f'<div class="card static panel">'
+            f'<div class="lbl">Current status</div>'
+            f'<div style="margin:8px 0 14px">{_cell("match_status", row["match_status"])[1]}</div>'
+            f'<div class="small">{escape(str(row["matched_qty"]))} units of {escape(str(row["supplied_item"]))} '
+            f'from {escape(str(row["supplying_org"]))} ({escape(str(row["supply_zone"]))})</div>'
+            f'<div class="small">Requested by {escape(str(row["requesting_org"]))} '
+            f'({escape(str(row["request_zone"]))})</div>'
+            f'</div>')
+        if row["match_status"] == "DISPATCHED":
+            st.number_input("Received quantity", min_value=1, max_value=int(row["matched_qty"]),
+                            value=int(row["matched_qty"]), step=1, key=f"recv_{mid}",
+                            help="Less than the dispatched amount records a shortfall.")
+        for action in ACTION_ORDER:
+            allowed_from, _ = db_sql.MATCH_TRANSITIONS[action]
+            st.button(ACTION_LABELS[action], key=f"act_{action}_{mid}", icon=ACTION_ICONS[action],
+                      type="secondary" if action == "reject" else "primary",
+                      disabled=row["match_status"] not in allowed_from, use_container_width=True,
+                      on_click=_run_match_action, args=(mid, action))
 
 PAGE_FUNCS = {
     "dashboard": page_dashboard,
     "add": page_add,
     "match": page_match,
+    "flow": page_flow,
     "sql": page_sql,
     "mongo": page_mongo,
     "tables": page_tables,

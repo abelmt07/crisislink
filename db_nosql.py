@@ -74,7 +74,7 @@ def get_recent_events(limit: int = 10) -> list:
         {"$sort": {"timestamp": -1}},
         {"$limit": limit},
         {"$project": {
-            "event_id": 1, "entity_type": 1, "action": 1,
+            "event_id": 1, "entity_type": 1, "entity_id": 1, "action": 1,
             "actor_name": 1, "zone": 1, "timestamp": 1, "_id": 0,
         }},
     ]))
